@@ -34,6 +34,27 @@ use tokio::{
     sync::oneshot::channel,
 };
 
+#[cfg(unix)]
+static UNIX_SOCKET_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// `Some(reason)` if the path must not be unlinked, `None` if it's absent or stale.
+#[cfg(unix)]
+fn existing_listener(path: &str) -> Option<String> {
+    use std::io::ErrorKind;
+    match std::os::unix::net::UnixStream::connect(path) {
+        Ok(_) => Some("a daemon is already listening there".to_string()),
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused) => None,
+        Err(e) => Some(format!("probing it failed: {e}")),
+    }
+}
+
+#[cfg(unix)]
+fn cleanup_unix_socket() {
+    if let Some(path) = UNIX_SOCKET_PATH.get() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 #[tokio::main]
 async fn main() {
     // `install` / `uninstall` / `export-driver` are one-shot driver-
@@ -149,21 +170,35 @@ async fn main() {
             );
         }
 
+        // Unlinking a socket that something is still serving would strand every
+        // client on the box, so only remove it once we know it's dead.
+        if let Some(why) = existing_listener(&socket_path) {
+            eprintln!(
+                "Refusing to bind {socket_path}: {why}. Stop the other muxer (e.g. \
+                 `systemctl stop usbmuxd`) or pass --socket-path to listen elsewhere."
+            );
+            std::process::exit(1);
+        }
+
+        info!("Deleting stale Unix socket");
+        std::fs::remove_file(&socket_path).unwrap_or_default();
+        info!("Binding to new Unix socket");
+        let listener =
+            tokio::net::UnixListener::bind(&socket_path).expect("Unable to bind to unix socket");
+        info!("Changing permissions of socket");
+        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))
+            .expect("Unable to set socket file permissions");
+        let _ = UNIX_SOCKET_PATH.set(socket_path.clone());
+
+        println!("Listening on {socket_path}");
+
         tokio::spawn(async move {
-            // Delete old Unix socket
-            info!("Deleting old Unix socket");
-            std::fs::remove_file(&socket_path).unwrap_or_default();
-            // Create UnixListener
-            info!("Binding to new Unix socket");
-            let listener = tokio::net::UnixListener::bind(&socket_path)
-                .expect("Unable to bind to unix socket");
-            // Change the permission of the socket
-            info!("Changing permissions of socket");
-            fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))
-                .expect("Unable to set socket file permissions");
+            wait_for_shutdown_signal().await;
+            cleanup_unix_socket();
+            std::process::exit(0);
+        });
 
-            println!("Listening on {socket_path}");
-
+        tokio::spawn(async move {
             loop {
                 let (socket, _) = match listener.accept().await {
                     Ok(s) => s,
@@ -211,11 +246,30 @@ async fn main() {
         });
         local.await;
         error!("mDNS discovery stopped");
+        #[cfg(unix)]
+        cleanup_unix_socket();
         std::process::exit(1);
     } else {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         }
+    }
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut term = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Failed to install SIGTERM handler: {e:?}");
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
     }
 }
 
