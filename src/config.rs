@@ -137,16 +137,32 @@ impl NetmuxdConfig {
                     println!("Usage:");
                     #[cfg(unix)]
                     println!("  netmuxd [options]");
-                    #[cfg(all(windows, feature = "libusbk"))]
+                    #[cfg(target_os = "windows")]
                     {
                         println!("  netmuxd [argument] [options]");
                         println!("Arguments:");
-                        println!("  install (installs the libusbK driver)");
-                        println!("  uninstall (uninstalls the libusbK driver)");
-                        println!("  export-driver (exports the driver files for signing)");
+                        #[cfg(feature = "libusbk")]
+                        {
+                            println!("  install (installs the libusbK driver)");
+                            println!("  uninstall (uninstalls the libusbK driver)");
+                            println!("  export-driver (exports the driver files for signing)");
+                        }
+                        println!(
+                            "  install-service [flags]    (admin: repoint the \"Apple Mobile Device Service\" at"
+                        );
+                        println!(
+                            "                              netmuxd so the SCM launches it. Extra flags are baked"
+                        );
+                        println!(
+                            "                              into the service command line. One-time elevation;"
+                        );
+                        println!(
+                            "                              netmuxd then runs without further prompts.)"
+                        );
+                        println!(
+                            "  uninstall-service          (admin: restore Apple's original service binary.)"
+                        );
                     }
-                    #[cfg(all(windows, not(feature = "libusbk")))]
-                    println!("  netmuxd [options]");
                     println!("Options:");
                     println!("  -p, --port <port>");
                     println!("  --host <host>");

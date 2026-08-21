@@ -55,8 +55,7 @@ fn cleanup_unix_socket() {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     // `install` / `uninstall` / `export-driver` are one-shot driver-
     // management subcommands that don't run the daemon.
     #[cfg(all(target_os = "windows", feature = "libusbk"))]
@@ -73,11 +72,81 @@ async fn main() {
         _ => {}
     }
 
-    println!("Starting netmuxd");
+    // `install-service` / `uninstall-service` take over (or restore) Apple's
+    // "Apple Mobile Device Service" so the SCM launches netmuxd instead of
+    // Apple's binary. One-shot, require admin once, don't run the daemon.
+    #[cfg(target_os = "windows")]
+    match std::env::args().nth(1).as_deref() {
+        Some("install-service") => {
+            init_cli_logger();
+            let extra: Vec<String> = std::env::args().skip(2).collect();
+            std::process::exit(netmuxd::apple_mux::service::install_service(&extra));
+        }
+        Some("uninstall-service") => {
+            init_cli_logger();
+            std::process::exit(netmuxd::apple_mux::service::uninstall_service());
+        }
+        _ => {}
+    }
 
+    // When the SCM starts the repointed service it launches us with
+    // `--service`; hand off to the service-control dispatcher. There's no
+    // console, so logs go to a file.
+    #[cfg(target_os = "windows")]
+    if std::env::args().any(|a| a == "--service") {
+        init_service_logger();
+        info!("Starting netmuxd (service mode)");
+        netmuxd::apple_mux::service::run_as_service(run_daemon_blocking);
+        return;
+    }
+
+    println!("Starting netmuxd");
     env_logger::init();
     info!("Logger initialized");
 
+    run_daemon_blocking();
+}
+
+fn run_daemon_blocking() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build Tokio runtime");
+    rt.block_on(run_daemon());
+}
+
+#[cfg(target_os = "windows")]
+fn init_cli_logger() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init();
+}
+
+#[cfg(target_os = "windows")]
+fn init_service_logger() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string()),
+    )
+    .join("netmuxd");
+    let _ = std::fs::create_dir_all(&dir);
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("netmuxd.log"))
+    {
+        Ok(file) => {
+            let _ =
+                env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+                    .target(env_logger::Target::Pipe(Box::new(file)))
+                    .try_init();
+        }
+        // Fall back to the default (stderr) sink if the file can't be opened.
+        Err(_) => {
+            let _ = env_logger::try_init();
+        }
+    }
+}
+
+async fn run_daemon() {
     let config = NetmuxdConfig::collect();
     info!("Collected arguments, proceeding");
 
@@ -122,10 +191,19 @@ async fn main() {
         let pairing_file_finder = PairingFileFinder::new(&config);
         let upstream = config.upstream.clone();
         tokio::spawn(async move {
-            // Create TcpListener
-            let listener = tokio::net::TcpListener::bind(format!("{}:{}", host, config.port))
+            let listener = match tokio::net::TcpListener::bind(format!("{}:{}", host, config.port))
                 .await
-                .expect("Unable to bind to TCP listener");
+            {
+                Ok(l) => l,
+                Err(e) => {
+                    error!(
+                        "Failed to bind TCP listener on {}:{}: {e}. Another process (e.g. Apple \
+                         Mobile Device Service) may already own that port.",
+                        host, config.port
+                    );
+                    std::process::exit(1);
+                }
+            };
 
             println!("Listening on {}:{}", host, config.port);
             #[cfg(unix)]

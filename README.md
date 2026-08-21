@@ -35,6 +35,33 @@ the device and the listener. Add `--restart-amds-on-exit` to start the
 `Apple Mobile Device Service` back up (via the Service Control Manager)
 when netmuxd shuts down with Ctrl+C, restoring Apple's usual stack.
 
+`--kill-amds` needs admin **every** run, because it terminates a
+SYSTEM-owned service process. To pay that cost only once, take over the
+service instead:
+
+```powershell
+# from an admin PowerShell, once:
+.\netmuxd.exe install-service
+```
+
+`install-service` repoints the `Apple Mobile Device Service` at netmuxd
+(`ChangeServiceConfig`) so the Service Control
+Manager launches netmuxd as a proper Windows service
+
+The original ImagePath is saved under `HKLM\SOFTWARE\netmuxd`; restore Apple's
+binary with:
+
+```powershell
+.\netmuxd.exe uninstall-service
+```
+
+Notes:
+
+- An Apple/iTunes update may rewrite the service back to Apple's binary. Just
+  re-run `install-service`. Or maybe it doesn't, who knows. Untested.
+- Under the SCM there's no console, so service-mode logs go to
+  `%ProgramData%\netmuxd\netmuxd.log` (`RUST_LOG` still applies; default `info`).
+
 ### libwdi/libusb 
 
 Apple's stock USB driver claims the iOS interface, so libusb can't open

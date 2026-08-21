@@ -10,6 +10,7 @@ pub mod amds;
 pub mod device;
 pub mod ffi;
 pub mod io;
+pub mod service;
 
 pub use device::{Device, enumerate_paths};
 pub use io::{AppleMuxReader, AppleMuxWriter};
