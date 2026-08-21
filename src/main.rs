@@ -444,6 +444,26 @@ async fn handle_stream(
                             handle_remove_device(&manager_sender, &parsed).await;
                             return;
                         }
+                        "IsNetmuxd" => {
+                            let res: Vec<u8> = RawPacket::new(
+                                plist::plist!({
+                                    "MessageType": "Result",
+                                    "IsNetmuxd": true,
+                                    "Version": env!("CARGO_PKG_VERSION"),
+                                })
+                                .into_dictionary()
+                                .unwrap(),
+                                idevice::usbmuxd::UsbmuxdConnection::XML_PLIST_VERSION,
+                                idevice::usbmuxd::UsbmuxdConnection::PLIST_MESSAGE_TYPE,
+                                0,
+                            )
+                            .into();
+                            if let Err(e) = socket.write_all(&res).await {
+                                warn!("Failed to send response to client: {e:?}");
+                            }
+
+                            return;
+                        }
                         other => {
                             // Forward anything we don't model to the upstream
                             // muxer when in shim mode; otherwise it's unknown.
