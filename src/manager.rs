@@ -211,6 +211,7 @@ pub fn new_manager_thread(config: &NetmuxdConfig) -> ManagerSender {
                             message.response,
                             pairing_file,
                             manager_sender.clone(),
+                            config.net_discover_cmd.clone(),
                         )
                         .await;
 

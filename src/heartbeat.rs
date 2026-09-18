@@ -3,6 +3,8 @@
 use idevice::{Idevice, heartbeat::HeartbeatClient, lockdown::LockdownClient};
 use log::{debug, info, warn};
 use std::net::SocketAddr;
+use std::{io, thread};
+use std::process::Command;
 use tokio::sync::oneshot::Sender;
 
 use crate::{
@@ -10,11 +12,42 @@ use crate::{
     manager::{ManagerRequest, ManagerSender},
 };
 
+fn dispatch_device_command(
+    command_template: String,
+    device_udid: String,
+) -> thread::JoinHandle<io::Result<()>> {
+    thread::spawn(move || {
+        let command = command_template.replace("%udid%", &device_udid);
+
+        #[cfg(windows)]
+        let status = Command::new("cmd")
+            .arg("/C")
+            .arg(&command)
+            .status()?;
+
+        #[cfg(not(windows))]
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .status()?;
+
+        if !status.success() {
+            eprintln!(
+                "device command exited with status: {}",
+                status
+            );
+        }
+
+        Ok(())
+    })
+}
+
 pub async fn heartbeat(
     device: MuxerDevice,
     response: Option<Sender<plist::Dictionary>>,
     pairing_file: idevice::pairing_file::PairingFile,
     sender: ManagerSender,
+    net_discover_cmd: Option<String>
 ) {
     debug!("Spawning heartbeat for {device:?}");
     tokio::spawn(async move {
@@ -118,6 +151,10 @@ pub async fn heartbeat(
             })
             .await
             .ok();
+
+        if net_discover_cmd != None {
+            dispatch_device_command(net_discover_cmd.unwrap(), udid.clone());
+        }
 
         loop {
             match heartbeat_client.get_marco(interval + 5).await {

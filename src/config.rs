@@ -23,6 +23,7 @@ pub struct NetmuxdConfig {
     pub upstream: Option<UsbmuxdAddr>,
     #[cfg(unix)]
     pub socket_path: String,
+    pub net_discover_cmd: Option<String>,
 }
 
 impl NetmuxdConfig {
@@ -47,6 +48,7 @@ impl NetmuxdConfig {
             upstream: None,
             #[cfg(unix)]
             socket_path: DEFAULT_SOCKET_PATH.to_string(),
+            net_discover_cmd: None,
         }
     }
     pub fn collect() -> Self {
@@ -130,6 +132,15 @@ impl NetmuxdConfig {
                     res.socket_path = std::env::args()
                         .nth(i + 1)
                         .expect("--socket-path passed without a path");
+                    i += 2;
+                }
+                "--on-net-discover" => {
+                    res.net_discover_cmd = Some(
+                        std::env::args()
+                            .nth(i + 1)
+                            .expect("--on-net-discover flag passed without command")
+                            .to_string(),
+                    );
                     i += 2;
                 }
                 "-h" | "--help" => {
@@ -224,6 +235,12 @@ impl NetmuxdConfig {
                     #[cfg(unix)]
                     println!(
                         "  --socket-path <path>       (unix socket to listen on; default {DEFAULT_SOCKET_PATH})"
+                    );
+                    println!(
+                        "  --on-net-discover <command>   command to run after discovering a device on the network."
+                    );
+                    println!(
+                        "accepts %udid% as a placeholder for the device UDID. example: my-backup-program -u %udid%"
                     );
                     println!("  -h, --help");
                     println!("  --about");
