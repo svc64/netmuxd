@@ -3,7 +3,10 @@
 // and placed everything in an Arc<Muxtex<>>. While it has its uses,
 // I much prefer the channel-runner paradigm for multithreaded programs.
 
-use std::{collections::HashMap, net::IpAddr};
+use std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+};
 
 use crossfire::{AsyncRx, MAsyncTx, mpmc::unbounded_async};
 use log::debug;
@@ -157,6 +160,9 @@ pub fn new_manager_thread(config: &NetmuxdConfig) -> ManagerSender {
     let mut usb_handles: HashMap<u64, UsbMuxHandle> = HashMap::new();
     let mut open_sockets: HashMap<u64, Vec<Sender<()>>> = HashMap::new();
     let mut listeners: Vec<UnboundedSender<ListenerEvent>> = Vec::new();
+    // A network device isn't in `devices` until its heartbeat is up, so without
+    // this a second discovery in that window adds it twice.
+    let mut pending_network: HashSet<String> = HashSet::new();
     let mut last_index: u64 = if config.upstream.is_some() {
         SHIM_NETWORK_ID_BASE
     } else {
@@ -180,7 +186,9 @@ pub fn new_manager_thread(config: &NetmuxdConfig) -> ManagerSender {
                     service_name,
                     connection_type,
                 } => {
-                    if find_device_id(&devices, &udid, &connection_type).is_some() {
+                    if find_device_id(&devices, &udid, &connection_type).is_some()
+                        || pending_network.contains(&udid)
+                    {
                         continue;
                     }
                     let pairing_file = match pairing_file_finder.get_pairing_record(&udid).await {
@@ -206,6 +214,7 @@ pub fn new_manager_thread(config: &NetmuxdConfig) -> ManagerSender {
                     last_interface_index = last_interface_index.wrapping_add(1);
 
                     if config.use_heartbeat {
+                        pending_network.insert(udid.clone());
                         heartbeat(
                             device,
                             message.response,
@@ -261,6 +270,7 @@ pub fn new_manager_thread(config: &NetmuxdConfig) -> ManagerSender {
                     last_interface_index = last_interface_index.wrapping_add(1);
                 }
                 ManagerRequestType::DeferredMuxerAdd { device, response } => {
+                    pending_network.remove(&device.serial_number);
                     println!("Adding network device {}", device.serial_number);
                     let attached = attached_plist(&device);
                     devices.insert(device.device_id, device);
@@ -320,6 +330,7 @@ pub fn new_manager_thread(config: &NetmuxdConfig) -> ManagerSender {
                     let _ = response.send(lookup);
                 }
                 ManagerRequestType::HeartbeatFailed { udid } => {
+                    pending_network.remove(&udid);
                     if let Some(id) = find_device_id(&devices, &udid, "Network") {
                         drop_entry(id, &mut devices, &mut usb_handles, &mut open_sockets);
                         broadcast(&mut listeners, ListenerEvent::Detached(id));

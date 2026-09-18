@@ -61,6 +61,10 @@ pub async fn heartbeat(
             Ok(s) => s,
             Err(e) => {
                 warn!("Failed to connect to lockdown port: {e:?}");
+                sender
+                    .send(ManagerRequest::heartbeat_failed(udid))
+                    .await
+                    .ok();
                 if let Some(response) = response {
                     response
                         .send(plist_macro::plist!(dict {
@@ -78,6 +82,10 @@ pub async fn heartbeat(
         let mut lockdown_client = LockdownClient { idevice };
         if let Err(e) = lockdown_client.start_session(&pairing_file).await {
             warn!("Failed to start lockdown session: {e:?}");
+            sender
+                .send(ManagerRequest::heartbeat_failed(udid))
+                .await
+                .ok();
             if let Some(response) = response {
                 response
                     .send(plist_macro::plist!(dict {
@@ -95,6 +103,10 @@ pub async fn heartbeat(
             Ok(p) => p,
             Err(e) => {
                 warn!("Failed to start heartbeat service: {e:?}");
+                sender
+                    .send(ManagerRequest::heartbeat_failed(udid))
+                    .await
+                    .ok();
                 if let Some(response) = response {
                     response
                         .send(plist_macro::plist!(dict {
@@ -111,6 +123,10 @@ pub async fn heartbeat(
             Ok(s) => s,
             Err(e) => {
                 warn!("Failed to connect to heartbeat port: {e:?}");
+                sender
+                    .send(ManagerRequest::heartbeat_failed(udid))
+                    .await
+                    .ok();
                 if let Some(response) = response {
                     response
                         .send(plist_macro::plist!(dict {
@@ -127,6 +143,10 @@ pub async fn heartbeat(
 
         if let Err(e) = idevice.start_session(&pairing_file, false).await {
             warn!("Failed to wrap heartbeat client in TLS: {e:?}");
+            sender
+                .send(ManagerRequest::heartbeat_failed(udid))
+                .await
+                .ok();
             if let Some(response) = response {
                 response
                     .send(plist_macro::plist!(dict {
