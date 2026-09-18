@@ -223,16 +223,11 @@ impl PairingFileFinder {
         }
     }
 
+    /// Returns this host's SystemBUID. Reads `SystemConfiguration.plist`
+    /// from `plist_storage` and lazily creates either identity field if
+    /// missing, writing the file back so other muxers see the same
+    /// identity.
     pub async fn get_buid(&self) -> Result<String, std::io::Error> {
-        let (_, buid) = self.get_host_identity().await?;
-        Ok(buid)
-    }
-
-    /// Returns the local (HostID, SystemBUID) used when pairing with
-    /// new devices. Reads `SystemConfiguration.plist` from
-    /// `plist_storage` and lazily creates either field if missing,
-    /// writing the file back so other muxers see the same identity.
-    pub async fn get_host_identity(&self) -> Result<(String, String), std::io::Error> {
         let path = PathBuf::from(self.plist_storage.clone()).join("SystemConfiguration.plist");
 
         let mut plist = if path.exists() {
@@ -253,15 +248,15 @@ impl PairingFileFinder {
 
         let mut dirty = false;
 
-        let host_id = match plist.get("HostID").and_then(|v| v.as_string()) {
-            Some(s) => s.to_string(),
-            None => {
-                let new_id = uuid::Uuid::new_v4().to_string().to_uppercase();
-                plist.insert("HostID".into(), new_id.clone().into());
-                dirty = true;
-                new_id
-            }
-        };
+        // Pair records carry their own HostID, but other muxers read this
+        // host's from here, so keep the field populated.
+        if plist.get("HostID").and_then(|v| v.as_string()).is_none() {
+            plist.insert(
+                "HostID".into(),
+                uuid::Uuid::new_v4().to_string().to_uppercase().into(),
+            );
+            dirty = true;
+        }
 
         let system_buid = match plist.get("SystemBUID").and_then(|v| v.as_string()) {
             Some(s) => s.to_string(),
@@ -288,6 +283,6 @@ impl PairingFileFinder {
             }
         }
 
-        Ok((host_id, system_buid))
+        Ok(system_buid)
     }
 }

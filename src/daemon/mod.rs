@@ -167,10 +167,14 @@ pub(crate) async fn pair_via_usb(
         }
     };
 
-    let (host_id, system_buid) = pairing_finder
-        .get_host_identity()
+    // A fresh HostID per record. `find_udid_from_txt` picks the record whose
+    // HostID reproduces an advertised authTag, so records sharing a HostID all
+    // match and it returns an arbitrary one.
+    let system_buid = pairing_finder
+        .get_buid()
         .await
         .map_err(|e| format!("read host identity: {e:?}"))?;
+    let host_id = uuid::Uuid::new_v4().to_string().to_uppercase();
 
     info!("Calling lockdown.pair() for {canonical_udid} (waiting for user trust)");
     let mut pairing_file = lockdown
